@@ -1,1 +1,66 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="IdeaCatcher"/>
+  <title>Catch-Idea 💡</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
 
+<div class="app">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div> Catch-Idea</div>
+    <button class="key-btn" id="keyBtn">add key</button>
+  </div>
+
+  <!-- CONTENT AREA -->
+  <div class="content" id="content"></div>
+
+  <!-- BOTTOM NAV -->
+  <nav class="nav">
+    <button class="nav-btn" data-view="capture">
+      <span class="nav-icon">✏️</span>Capture
+    </button>
+    <button class="nav-btn active" data-view="vault">
+      <span class="nav-icon">📦</span>Vault
+    </button>
+    <button class="nav-btn" data-view="dashboard">
+      <span class="nav-icon">📊</span>Dashboard
+    </button>
+  </nav>
+
+</div>
+
+<!-- SETUP OVERLAY -->
+<div class="overlay" id="setupOverlay">
+  <div class="setup-card">
+    <div style="font-size:32px;margin-bottom:8px">💡</div>
+    <div class="setup-title">Catch-Idea</div>
+    <div class="setup-sub">Enter your free OpenRouter API key to enable AI analysis of your ideas.</div>
+    <div class="setup-steps">
+      <div class="setup-step"><div class="step-num">1</div><span>Go to <a href="https://openrouter.ai" target="_blank" rel="noopener" class="setup-link">openrouter.ai</a> → sign up free (no card needed)</span></div>
+      <div class="setup-step"><div class="step-num">2</div><span>Go to Keys → Create Key → copy it</span></div>
+      <div class="setup-step"><div class="step-num">3</div><span>Paste below — saved in your browser only</span></div>
+    </div>
+    <input class="input-field" type="password" id="keyInput" placeholder="sk-or-v1-••••••••••••••••••••••"/>
+    <button class="primary-btn" id="saveKeyBtn">Save & Start →</button>
+    <div style="margin-top:12px;text-align:center;font-size:12px;color:var(--muted)">
+      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" class="setup-link">openrouter.ai/keys ↗</a>
+      · free models · no credit card
+    </div>
+    <div class="setup-warning">
+      ⚠️ Your key is stored in browser local storage. Only use on your personal device.
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
