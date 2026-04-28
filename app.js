@@ -1,13 +1,14 @@
 // ── Catch-Idea · app.js ──────────────────────────────────────────────
-// Free AI idea journal — OpenRouter (free Llama models) + localStorage
-// No build step. Just open index.html or deploy to anywhere.
+// Free AI idea journal — OpenRouter (free models) + localStorage
+// No build step. Just open index.html.
 // ──────────────────────────────────────────────────────────────────────
 
 const OR_URL    = "https://openrouter.ai/api/v1/chat/completions";
-const OR_MODEL  = "meta-llama/llama-3.1-8b-instruct:free";
-// vision model not free – fallback to text model with a note
-const VIS_MODEL = "meta-llama/llama-3.1-8b-instruct:free";
-const FALLBACK  = "mistralai/mistral-7b-instruct:free";
+// ✅ Verified free models on OpenRouter (April 2026)
+const OR_MODEL  = "google/gemma-2-9b-it:free";          // primary free
+const FALLBACK  = "mistralai/mistral-7b-instruct:free"; // backup free
+const VIS_MODEL = OR_MODEL;                              // no free vision model – use text
+
 const S_IDEAS   = "ic_ideas_v2";
 const S_KEY     = "ic_apikey";
 
@@ -94,12 +95,10 @@ function saveIdeas() {
 
 // ── OpenRouter API ─────────────────────────────────────────────────────
 async function analyzeWithAI(text, imageBase64 = null) {
-  // If image is present, we can't use a vision model for free;
-  // instead we mention the photo and ask AI to make the best of text.
   const hasPhoto = !!imageBase64;
   const prompt = `Analyze this idea. Reply ONLY with valid JSON — no markdown, no explanation outside the JSON.
 
-Idea: "${text}"${hasPhoto ? '\n(A photo was attached — analyze based on the description only, as the image cannot be viewed directly.)' : ''}
+Idea: "${text}"${hasPhoto ? '\n(A photo was attached — analyze based on the description only.)' : ''}
 
 Return exactly this structure:
 {
@@ -145,7 +144,7 @@ Return exactly this structure:
   const raw   = data.choices?.[0]?.message?.content || "";
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) {
-    // fallback with mistral
+    // fallback to mistral
     try {
       const r2 = await fetch(OR_URL, {
         method: "POST",
@@ -237,7 +236,7 @@ ${state.mode === "photo" ? `
     ` : `
       <div style="font-size:36px;margin-bottom:8px">📸</div>
       <div style="font-size:14px;color:var(--muted)">Tap to take or upload a photo</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">(Image analysis uses your text description only — free tier limitation)</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">(Image analysis uses your text description — free tier limitation)</div>
     `}
   </div>
   ${state.photoData ? `<textarea class="idea-textarea" id="photoTA" placeholder="Describe what’s in the photo for the AI…" rows="3" style="margin-top:10px"></textarea>` : ""}
@@ -443,27 +442,33 @@ ${topIdeas.length > 0 ? `
 
 // ── Event binding ──────────────────────────────────────────────────────
 function attachEvents() {
-  // Textarea for text mode — value set + re-render on input
+  // ── Textarea for TEXT mode (no full re‑render on typing) ─
   const ta = document.getElementById("ideaTA");
   if (ta) {
+    // Set value safely (already escaped in innerHTML)
     ta.value = state.ideaText;
     ta.addEventListener("input", e => {
       state.ideaText = e.target.value;
-      render();  // <-- FIX: re-render so Analyze button updates
+      updateAnalyzeButton();  // only update button, keep textarea intact
     });
+    // Focus at end of text if needed
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
   }
 
-  // Textarea for photo context
+  // ── Textarea for PHOTO context (same approach) ────────
   const pta = document.getElementById("photoTA");
   if (pta) {
-    pta.value = (state.ideaText === "[Photo idea]" || state.ideaText === "[Photo idea]\n") ? "" : state.ideaText;
+    const initial = (state.ideaText === "[Photo idea]" || state.ideaText === "[Photo idea]\n") ? "" : state.ideaText;
+    pta.value = initial;
     pta.addEventListener("input", e => {
       state.ideaText = e.target.value;
-      render();  // <-- FIX: same here
+      updateAnalyzeButton();
     });
+    pta.focus();
   }
 
-  // mode tabs — stop voice if switching away
+  // ── mode tabs ────────────────────────────────────────
   document.querySelectorAll(".mode-tab").forEach(b => {
     b.addEventListener("click", () => {
       if (state.listening) {
@@ -477,11 +482,11 @@ function attachEvents() {
     });
   });
 
-  // voice
+  // ── voice ────────────────────────────────────────────
   const vBtn = document.getElementById("voiceBtn");
   if (vBtn) vBtn.addEventListener("click", toggleVoice);
 
-  // photo
+  // ── photo ────────────────────────────────────────────
   const pi = document.getElementById("photoInput");
   if (pi) pi.addEventListener("change", async (e) => {
     const f = e.target.files?.[0];
@@ -507,15 +512,14 @@ function attachEvents() {
     }
   });
 
-  // analyze
+  // ── analyze ──────────────────────────────────────────
   const aBtn = document.getElementById("analyzeBtn");
   if (aBtn) aBtn.addEventListener("click", runAnalysis);
 
-  // save idea
+  // ── save / discard ───────────────────────────────────
   const sBtn = document.getElementById("saveIdeaBtn");
   if (sBtn) sBtn.addEventListener("click", saveIdea);
 
-  // discard
   const dBtn = document.getElementById("discardBtn");
   if (dBtn) dBtn.addEventListener("click", () => {
     state.analysis = null; state.ideaText = "";
@@ -524,19 +528,19 @@ function attachEvents() {
     render();
   });
 
-  // update key from error box
+  // ── update key from error box ────────────────────────
   const ukBtn = document.getElementById("updateKeyFromError");
   if (ukBtn) ukBtn.addEventListener("click", (e) => {
     e.preventDefault();
     showSetup();
   });
 
-  // vault filters
+  // ── vault filters ────────────────────────────────────
   document.querySelectorAll(".filter-pill").forEach(b => {
     b.addEventListener("click", () => { state.filter = b.dataset.filter; render(); });
   });
 
-  // vault card click → detail
+  // ── card click → detail ──────────────────────────────
   document.querySelectorAll(".idea-card[data-id]").forEach(card => {
     card.addEventListener("click", e => {
       if (e.target.closest(".delete-card-btn")) return;
@@ -545,7 +549,7 @@ function attachEvents() {
     });
   });
 
-  // delete from card
+  // ── delete from card ─────────────────────────────────
   document.querySelectorAll(".delete-card-btn").forEach(b => {
     b.addEventListener("click", e => {
       e.stopPropagation();
@@ -553,19 +557,19 @@ function attachEvents() {
     });
   });
 
-  // back from detail
+  // ── back from detail ─────────────────────────────────
   const backBtn = document.getElementById("backBtn");
   if (backBtn) backBtn.addEventListener("click", () => { state.detailId = null; render(); });
 
-  // delete from detail
+  // ── delete from detail ───────────────────────────────
   const delBtn = document.getElementById("deleteIdeaBtn");
   if (delBtn) delBtn.addEventListener("click", () => deleteIdea(state.detailId));
 
-  // notifications
+  // ── notifications ────────────────────────────────────
   const nBtn = document.getElementById("notifBtn");
   if (nBtn) nBtn.addEventListener("click", requestNotif);
 
-  // top-ideas in dashboard → detail
+  // ── top‑ideas in dashboard → detail ──────────────────
   document.querySelectorAll(".top-ideas-section .idea-card[data-id]").forEach(card => {
     card.addEventListener("click", () => {
       state.detailId = card.dataset.id;
@@ -573,6 +577,15 @@ function attachEvents() {
       render();
     });
   });
+}
+
+// ── Helper: update analyze button disabled state only ──────────────────
+function updateAnalyzeButton() {
+  const btn = document.getElementById("analyzeBtn");
+  if (!btn) return;
+  const can = (state.ideaText.trim().length > 3 || state.photoData) &&
+              !state.analyzing && !state.photoLoading;
+  btn.disabled = !can;
 }
 
 // ── Actions ────────────────────────────────────────────────────────────
