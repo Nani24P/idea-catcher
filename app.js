@@ -1,7 +1,12 @@
-// app.js — Catch-Idea (fixed: XSS, voice, image resize, JSON parse safety)
+// ── Catch-Idea · app.js ──────────────────────────────────────────────
+// Free AI idea journal — OpenRouter (free Llama models) + localStorage
+// No build step. Just open index.html or deploy to anywhere.
+// ──────────────────────────────────────────────────────────────────────
+
 const OR_URL    = "https://openrouter.ai/api/v1/chat/completions";
 const OR_MODEL  = "meta-llama/llama-3.1-8b-instruct:free";
-const VIS_MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free";
+// vision model not free – fallback to text model with a note
+const VIS_MODEL = "meta-llama/llama-3.1-8b-instruct:free";
 const FALLBACK  = "mistralai/mistral-7b-instruct:free";
 const S_IDEAS   = "ic_ideas_v2";
 const S_KEY     = "ic_apikey";
@@ -89,9 +94,12 @@ function saveIdeas() {
 
 // ── OpenRouter API ─────────────────────────────────────────────────────
 async function analyzeWithAI(text, imageBase64 = null) {
+  // If image is present, we can't use a vision model for free;
+  // instead we mention the photo and ask AI to make the best of text.
+  const hasPhoto = !!imageBase64;
   const prompt = `Analyze this idea. Reply ONLY with valid JSON — no markdown, no explanation outside the JSON.
 
-Idea: "${text}"
+Idea: "${text}"${hasPhoto ? '\n(A photo was attached — analyze based on the description only, as the image cannot be viewed directly.)' : ''}
 
 Return exactly this structure:
 {
@@ -105,14 +113,11 @@ Return exactly this structure:
   "verdict": "2-3 sentence honest assessment of viability"
 }`;
 
-  const userContent = imageBase64
-    ? [
-        { type: "image_url", image_url: { url: imageBase64 } },
-        { type: "text",      text: `Describe what you see as an idea, then analyze it.\n${prompt}` },
-      ]
+  const userContent = hasPhoto
+    ? [ { type: "text", text: prompt } ]
     : prompt;
 
-  const model = imageBase64 ? VIS_MODEL : OR_MODEL;
+  const model = OR_MODEL; // always text model (free)
 
   const res = await fetch(OR_URL, {
     method: "POST",
@@ -140,7 +145,8 @@ Return exactly this structure:
   const raw   = data.choices?.[0]?.message?.content || "";
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) {
-    if (model !== FALLBACK) {
+    // fallback with mistral
+    try {
       const r2 = await fetch(OR_URL, {
         method: "POST",
         headers: { "Authorization": `Bearer ${state.apiKey}`, "Content-Type": "application/json" },
@@ -150,9 +156,9 @@ Return exactly this structure:
       const raw2 = d2.choices?.[0]?.message?.content || "";
       const m2   = raw2.match(/\{[\s\S]*\}/);
       if (m2) {
-        try { return JSON.parse(m2[0]); } catch { /* fall through */ }
+        try { return JSON.parse(m2[0]); } catch {}
       }
-    }
+    } catch {}
     throw new Error("AI returned an unexpected format. Please try again.");
   }
   try {
@@ -231,10 +237,10 @@ ${state.mode === "photo" ? `
     ` : `
       <div style="font-size:36px;margin-bottom:8px">📸</div>
       <div style="font-size:14px;color:var(--muted)">Tap to take or upload a photo</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">AI will read & analyze it</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">(Image analysis uses your text description only — free tier limitation)</div>
     `}
   </div>
-  ${state.photoData ? `<textarea class="idea-textarea" id="photoTA" placeholder="Add context about this photo idea (optional)…" rows="3" style="margin-top:10px"></textarea>` : ""}
+  ${state.photoData ? `<textarea class="idea-textarea" id="photoTA" placeholder="Describe what’s in the photo for the AI…" rows="3" style="margin-top:10px"></textarea>` : ""}
 ` : ""}
 
 ${state.error ? `
@@ -437,17 +443,24 @@ ${topIdeas.length > 0 ? `
 
 // ── Event binding ──────────────────────────────────────────────────────
 function attachEvents() {
-  // Set textarea values safely (avoids XSS from innerHTML attribute injection)
+  // Textarea for text mode — value set + re-render on input
   const ta = document.getElementById("ideaTA");
   if (ta) {
     ta.value = state.ideaText;
-    ta.addEventListener("input", e => { state.ideaText = e.target.value; });
+    ta.addEventListener("input", e => {
+      state.ideaText = e.target.value;
+      render();  // <-- FIX: re-render so Analyze button updates
+    });
   }
 
+  // Textarea for photo context
   const pta = document.getElementById("photoTA");
   if (pta) {
     pta.value = (state.ideaText === "[Photo idea]" || state.ideaText === "[Photo idea]\n") ? "" : state.ideaText;
-    pta.addEventListener("input", e => { state.ideaText = e.target.value; });
+    pta.addEventListener("input", e => {
+      state.ideaText = e.target.value;
+      render();  // <-- FIX: same here
+    });
   }
 
   // mode tabs — stop voice if switching away
@@ -468,7 +481,7 @@ function attachEvents() {
   const vBtn = document.getElementById("voiceBtn");
   if (vBtn) vBtn.addEventListener("click", toggleVoice);
 
-  // photo — async with resize
+  // photo
   const pi = document.getElementById("photoInput");
   if (pi) pi.addEventListener("change", async (e) => {
     const f = e.target.files?.[0];
