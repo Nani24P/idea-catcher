@@ -1,19 +1,10 @@
 // ── Catch-Idea · app.js ──────────────────────────────────────────────
-// Free AI idea journal — OpenRouter (free models) + localStorage
-// Now with automatic free-model fallback and debug logging.
+// Idea journal using Google Gemini API (AI Studio free tier)
+// No build step. Open index.html and start.
 
-const OR_URL  = "https://openrouter.ai/api/v1/chat/completions";
-const S_IDEAS = "ic_ideas_v2";
-const S_KEY   = "ic_apikey";
-
-// Verified free models (April 2026) – will be tried in order
-const FREE_MODELS = [
-  "mistralai/mistral-7b-instruct:free",
-  "mistralai/mistral-nemo:free",
-  "qwen/qwen-2.5-7b-instruct:free",
-  "meta-llama/llama-3.1-8b-instruct:free", // might be removed, but we try
-  "google/gemma-2-9b-it:free",
-];
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+const S_IDEAS    = "ic_ideas_v2";
+const S_KEY      = "ic_apikey";
 
 const CATS = {
   Tech:     { emoji:"💻", color:"#60a5fa" },
@@ -23,7 +14,7 @@ const CATS = {
   Other:    { emoji:"💡", color:"#c084fc" },
 };
 
-// ── State (plus debug) ─────────────────────────────────────────────────
+// ── State ──────────────────────────────────────────────────────────────
 let state = {
   ideas:        [],
   apiKey:       "",
@@ -39,7 +30,7 @@ let state = {
   analyzing:    false,
   analysis:     null,
   error:        "",
-  debugVisible: false,   // toggle debug panel
+  debugVisible: false,
 };
 
 let recognition = null;
@@ -55,7 +46,7 @@ function log(level, message, data = null) {
     data: data ? JSON.stringify(data, null, 2) : null,
   };
   debugLogs.push(entry);
-  if (state.debugVisible) renderDebugPanel(); // keep live if open
+  if (state.debugVisible) renderDebugPanel();
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────
@@ -111,11 +102,30 @@ function saveIdeas() {
   localStorage.setItem(S_IDEAS, JSON.stringify(state.ideas));
 }
 
-// ── OpenRouter API with automatic model fallback ────────────────────────
+// ── Gemini API (replaces OpenRouter) ────────────────────────────────────
 async function analyzeWithAI(text, imageBase64 = null) {
-  const prompt = `Analyze this idea. Reply ONLY with valid JSON — no markdown, no explanation outside the JSON.
+  const hasPhoto = !!imageBase64;
 
-Idea: "${text}"${imageBase64 ? '\n(A photo is attached but cannot be viewed directly.)' : ''}
+  const prompt = hasPhoto
+    ? `Analyze this idea. Reply ONLY with valid JSON — no markdown, no explanation outside the JSON.
+
+Idea: "${text}"
+(A photo was attached — analyze based on the description only.)
+
+Return exactly this structure:
+{
+  "summary": "one compelling sentence",
+  "category": "Tech" | "Business" | "Creative" | "Personal" | "Other",
+  "score": <integer 1-10>,
+  "actions": ["action 1","action 2","action 3"],
+  "risks": ["risk 1","risk 2"],
+  "opportunities": ["opportunity 1","opportunity 2"],
+  "similar": ["existing thing 1","existing thing 2"],
+  "verdict": "2-3 sentence honest assessment of viability"
+}`
+    : `Analyze this idea. Reply ONLY with valid JSON — no markdown, no explanation outside the JSON.
+
+Idea: "${text}"
 
 Return exactly this structure:
 {
@@ -129,77 +139,54 @@ Return exactly this structure:
   "verdict": "2-3 sentence honest assessment of viability"
 }`;
 
-  const userContent = imageBase64
-    ? [{ type: "text", text: prompt }]
-    : prompt;
-
-  let lastError = null;
-
-  // try each free model until one works
-  for (const model of FREE_MODELS) {
-    log("info", `Trying model: ${model}`);
-    try {
-      const res = await fetch(OR_URL, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${state.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: userContent }],
-          max_tokens: 900,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg = err?.error?.message || `Status ${res.status}`;
-        log("warn", `Model ${model} failed: ${msg}`);
-        // if error contains "No endpoints", try next model
-        if (msg.includes("No endpoints")) continue;
-        // otherwise throw a meaningful error
-        if (res.status === 401) throw new Error("Invalid API key. Check your OpenRouter key and try again.");
-        if (res.status === 429) throw new Error("Rate limit hit. Wait a moment and try again.");
-        throw new Error(msg);
+  const requestBody = {
+    contents: [
+      {
+        parts: [
+          { text: prompt }
+        ]
       }
+    ]
+  };
 
-      const data = await res.json();
-      if (data.error) {
-        log("warn", `Model ${model} API error: ${data.error.message}`);
-        if (data.error.message?.includes("No endpoints")) continue;
-        throw new Error(data.error.message || "API error from OpenRouter.");
-      }
+  log("info", "Calling Gemini 2.5 Flash");
 
-      const raw = data.choices?.[0]?.message?.content || "";
-      log("info", `Model ${model} responded`, { raw: raw.substring(0, 200) });
+  const res = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(state.apiKey)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requestBody),
+  });
 
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) {
-        log("warn", `Model ${model} returned no JSON block, trying next`);
-        continue; // not a JSON response, try next model
-      }
-
-      try {
-        const parsed = JSON.parse(match[0]);
-        return parsed;
-      } catch (e) {
-        log("warn", `Model ${model} JSON parse error, trying next`);
-        continue;
-      }
-    } catch (e) {
-      if (e.message.includes("Invalid API key") || e.message.includes("Rate limit")) {
-        throw e; // don't retry on auth/rate issues
-      }
-      lastError = e;
-      log("error", `Model ${model} exception: ${e.message}`);
-    }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err?.error?.message || `Status ${res.status}`;
+    log("error", `Gemini API error: ${msg}`);
+    if (res.status === 400) throw new Error(msg);
+    if (res.status === 403) throw new Error("Invalid API key. Check your Google AI Studio key and try again.");
+    if (res.status === 429) throw new Error("Rate limit hit. Wait a moment and try again.");
+    throw new Error(msg);
   }
 
-  log("error", "All free models failed");
-  throw new Error(
-    lastError?.message || "No available free model could analyze your idea. Please try again later."
-  );
+  const data = await res.json();
+  log("info", "Gemini responded", { candidates: data.candidates?.length });
+
+  const textOutput = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+  if (!textOutput) {
+    // maybe blocked by safety
+    const reason = data.candidates?.[0]?.finishReason;
+    if (reason === "SAFETY") throw new Error("Idea was blocked by safety filters. Try rephrasing.");
+    throw new Error("AI returned empty response. Please try again.");
+  }
+
+  const match = textOutput.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("AI returned an unexpected format. Please try again.");
+
+  try {
+    return JSON.parse(match[0]);
+  } catch (e) {
+    throw new Error("AI response was malformed. Please try again.");
+  }
 }
 
 // ── Render engine ──────────────────────────────────────────────────────
@@ -219,7 +206,6 @@ function render() {
     keyBtn.classList.remove("is-set");
   }
 
-  // Toggle debug button visibility
   const debugBtn = document.getElementById("debugToggle");
   if (debugBtn) debugBtn.style.display = state.apiKey ? "" : "none";
 
@@ -276,10 +262,10 @@ ${state.mode === "photo" ? `
     ` : `
       <div style="font-size:36px;margin-bottom:8px">📸</div>
       <div style="font-size:14px;color:var(--muted)">Tap to take or upload a photo</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">(Image analysis uses your text description only — free tier limitation)</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">(Image analysis uses your text description — free tier limitation)</div>
     `}
   </div>
-  ${state.photoData ? `<textarea class="idea-textarea" id="photoTA" placeholder="Describe what’s in the photo for the AI…" rows="3" style="margin-top:10px"></textarea>` : ""}
+  ${state.photoData ? `<textarea class="idea-textarea" id="photoTA" placeholder="Describe what's in the photo for the AI..." rows="3" style="margin-top:10px"></textarea>` : ""}
 ` : ""}
 
 ${state.error ? `
@@ -542,7 +528,6 @@ function downloadLogs() {
 
 // ── Event binding ──────────────────────────────────────────────────────
 function attachEvents() {
-  // textarea for text mode (no full re‑render)
   const ta = document.getElementById("ideaTA");
   if (ta) {
     ta.value = state.ideaText;
@@ -565,7 +550,6 @@ function attachEvents() {
     pta.focus();
   }
 
-  // mode tabs
   document.querySelectorAll(".mode-tab").forEach(b => {
     b.addEventListener("click", () => {
       if (state.listening) {
@@ -579,11 +563,9 @@ function attachEvents() {
     });
   });
 
-  // voice
   const vBtn = document.getElementById("voiceBtn");
   if (vBtn) vBtn.addEventListener("click", toggleVoice);
 
-  // photo
   const pi = document.getElementById("photoInput");
   if (pi) pi.addEventListener("change", async (e) => {
     const f = e.target.files?.[0];
@@ -609,11 +591,9 @@ function attachEvents() {
     }
   });
 
-  // analyze
   const aBtn = document.getElementById("analyzeBtn");
   if (aBtn) aBtn.addEventListener("click", runAnalysis);
 
-  // save / discard
   const sBtn = document.getElementById("saveIdeaBtn");
   if (sBtn) sBtn.addEventListener("click", saveIdea);
 
@@ -625,19 +605,16 @@ function attachEvents() {
     render();
   });
 
-  // update key from error
   const ukBtn = document.getElementById("updateKeyFromError");
   if (ukBtn) ukBtn.addEventListener("click", (e) => {
     e.preventDefault();
     showSetup();
   });
 
-  // vault filters
   document.querySelectorAll(".filter-pill").forEach(b => {
     b.addEventListener("click", () => { state.filter = b.dataset.filter; render(); });
   });
 
-  // card click → detail
   document.querySelectorAll(".idea-card[data-id]").forEach(card => {
     card.addEventListener("click", e => {
       if (e.target.closest(".delete-card-btn")) return;
@@ -646,7 +623,6 @@ function attachEvents() {
     });
   });
 
-  // delete from card
   document.querySelectorAll(".delete-card-btn").forEach(b => {
     b.addEventListener("click", e => {
       e.stopPropagation();
@@ -654,19 +630,15 @@ function attachEvents() {
     });
   });
 
-  // back from detail
   const backBtn = document.getElementById("backBtn");
   if (backBtn) backBtn.addEventListener("click", () => { state.detailId = null; render(); });
 
-  // delete from detail
   const delBtn = document.getElementById("deleteIdeaBtn");
   if (delBtn) delBtn.addEventListener("click", () => deleteIdea(state.detailId));
 
-  // notifications
   const nBtn = document.getElementById("notifBtn");
   if (nBtn) nBtn.addEventListener("click", requestNotif);
 
-  // top-ideas in dashboard → detail
   document.querySelectorAll(".top-ideas-section .idea-card[data-id]").forEach(card => {
     card.addEventListener("click", () => {
       state.detailId = card.dataset.id;
@@ -676,7 +648,6 @@ function attachEvents() {
   });
 }
 
-// ── Helper: update analyze button only ─────────────────────────────────
 function updateAnalyzeButton() {
   const btn = document.getElementById("analyzeBtn");
   if (!btn) return;
@@ -839,7 +810,6 @@ document.getElementById("keyInput").addEventListener("keydown", e => {
   if (e.key === "Enter") document.getElementById("saveKeyBtn").click();
 });
 
-// Create debug toggle button dynamically (in topbar)
 (function initDebugToggle() {
   const topbar = document.querySelector(".topbar");
   const btn = document.createElement("button");
